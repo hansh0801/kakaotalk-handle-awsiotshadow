@@ -4,6 +4,8 @@ import pymysql
 import sys
 import datetime
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTShadowClient
+from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
+
 import logging
 import time
 
@@ -40,11 +42,15 @@ def customShadowCallback_Delete(payload, responseStatus, token):
 # Read in command-line parameters
 
 host = 'host'
-rootCAPath = 'CAPATH'
+rootCAPath = 'rootCAPath'
+certificatePath = 'certificatePath'
+privateKeyPath = 'privateKeyPath'
 port = 8883
 useWebsocket = True
-thingName = 'thingname'
-clientId =''
+thingName = 'esp8266'
+clientId ='esp8266'
+
+
 logger = logging.getLogger("AWSIoTPythonSDK.core")
 logger.setLevel(logging.DEBUG)
 streamHandler = logging.StreamHandler()
@@ -55,32 +61,34 @@ logger.addHandler(streamHandler)
 # Init AWSIoTMQTTShadowClient
 myAWSIoTMQTTShadowClient = None
 if useWebsocket:
-    myAWSIoTMQTTShadowClient = AWSIoTMQTTShadowClient(clientId, useWebsocket=True)
-    myAWSIoTMQTTShadowClient.configureEndpoint(host, port)
-    #myAWSIoTMQTTShadowClient.configureCredentials(rootCAPath)
+    myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId)
+    myAWSIoTMQTTClient.configureEndpoint(host, port)
+    myAWSIoTMQTTClient.configureCredentials(rootCAPath, privateKeyPath, certificatePath)
 
-
-# AWSIoTMQTTShadowClient configuration
-myAWSIoTMQTTShadowClient.configureAutoReconnectBackoffTime(1, 32, 20)
-myAWSIoTMQTTShadowClient.configureConnectDisconnectTimeout(10)  # 10 sec
-myAWSIoTMQTTShadowClient.configureMQTTOperationTimeout(5)  # 5 sec
+# AWSIoTMQTTClient connection configuration
+myAWSIoTMQTTClient.configureAutoReconnectBackoffTime(1, 32, 20)
+myAWSIoTMQTTClient.configureOfflinePublishQueueing(-1)  # Infinite offline Publish queueing
+myAWSIoTMQTTClient.configureDrainingFrequency(2)  # Draining: 2 Hz
+myAWSIoTMQTTClient.configureConnectDisconnectTimeout(10)  # 10 sec
+myAWSIoTMQTTClient.configureMQTTOperationTimeout(5)  # 5 sec
 
 # Connect to AWS IoT
-myAWSIoTMQTTShadowClient.connect()
 
+topic = '$aws/things/esp8266_0FB9EE/shadow/update'
 # Create a deviceShadow with persistent subscription
-deviceShadowHandler = myAWSIoTMQTTShadowClient.createShadowHandlerWithName(thingName, True)
+#deviceShadowHandler = myAWSIoTMQTTShadowClient.createShadowHandlerWithName(thingName, True)
 
 # Delete shadow JSON doc
-deviceShadowHandler.shadowDelete(customShadowCallback_Delete, 5)
+#deviceShadowHandler.shadowDelete(customShadowCallback_Delete, 5)
+
 
 
 
 def lambda_handler(event, context):
-    rds_host  = "host"
-    name = "name"
-    password = "passwd"
-    db_name = "DB"
+    rds_host  = ""
+    name = ""
+    password = ""
+    db_name = ""
     conn = pymysql.connect(rds_host, user=name, passwd=password, db=db_name)
     curs = conn.cursor(pymysql.cursors.DictCursor)
     # TODO implement
@@ -103,7 +111,7 @@ def lambda_handler(event, context):
         savetime =savetime_row['savetime']
         savetime_transform = savetime.strftime('%Y년 %m월 %d일 %H시 %M분')
 
-        message ={'message' : {'text':'계사 1의 현재 평균 온도는 '+str(sensor_data)+'도입니다. 측정 시간은 '+savetime_transform+"입니다."} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
+        message ={'message' : {'text':'계사 1의 현재 평균 온도는 '+str(sensor_data)+'도입니다. 측정 시간은 '+savetime_transform+"입니다.","message_button":{'label':'상세 온도 보기','url':"http://192.168.0.35/google_chart_temperature.php"}} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
 
 
 
@@ -127,16 +135,24 @@ def lambda_handler(event, context):
         savetime =savetime_row['savetime']
         savetime_transform = savetime.strftime('%Y년 %m월 %d일 %H시 %M분')
 
-        message ={'message' : {'text':'계사 1의 현재 평균 습도는 '+str(sensor_data)+'% 입니다. 측정 시간은 '+savetime_transform+"입니다."} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
+        message ={'message' : {'text':'계사 1의 현재 평균 습도는 '+str(sensor_data)+'% 입니다. 측정 시간은 '+savetime_transform+"입니다.",'message_button':{'label': '상세 습도 보기','url':'http://192.168.0.35/google_chart_humidity.php'}}, 'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
 
-    elif(event["content"]=="계사 LED ON"):
+    elif(event["content"]=="계사 1 LED ON"):
+        myAWSIoTMQTTClient.connect()
         JSONPayload = '{"state":{"desired":{"on":true }}}'
-        deviceShadowHandler.shadowUpdate(JSONPayload, customShadowCallback_Update, 5)
+        myAWSIoTMQTTClient.publish(topic, JSONPayload, 1)
         message ={'message' : {'text':'LED를 켰습니다. 직접 가서 확인해보세요.'} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
-    elif(event["content"]=="계사 LED OFF"):
+        myAWSIoTMQTTClient.disconnect()
+
+
+    elif(event["content"]=="계사 1 LED OFF"):
+        myAWSIoTMQTTClient.connect()
         JSONPayload = '{"state":{"desired":{"on":false }}}'
-        deviceShadowHandler.shadowUpdate(JSONPayload, customShadowCallback_Update, 5)
+        myAWSIoTMQTTClient.publish(topic, JSONPayload, 1)
+
         message ={'message' : {'text':'LED를 껏습니다. 직접 가서 확인해보세요.'} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
+        myAWSIoTMQTTClient.disconnect()
+
     else :
         message ={'message' : {'text':'아직 기능 테스트중입니다.'} ,'keyboard': {'type':'buttons','buttons':['계사 1 온도', '계사 1 습도', '계사 1 LED ON','계사 1 LED OFF']}}
 
